@@ -30,6 +30,7 @@ namespace winrt::Microsoft::Terminal::Control::implementation
         _focusableElements.insert(TextBox());
         _focusableElements.insert(CloseButton());
         _focusableElements.insert(CaseSensitivityButton());
+        _focusableElements.insert(RegexButton());
         _focusableElements.insert(GoForwardButton());
         _focusableElements.insert(GoBackwardButton());
 
@@ -224,6 +225,11 @@ namespace winrt::Microsoft::Terminal::Control::implementation
         return CaseSensitivityButton().IsChecked().GetBoolean();
     }
 
+    bool SearchBoxControl::RegularExpression()
+    {
+        return RegexButton().IsChecked().GetBoolean();
+    }
+
     // Method Description:
     // - Handler for pressing Enter on TextBox, trigger
     //   text search
@@ -245,11 +251,11 @@ namespace winrt::Microsoft::Terminal::Control::implementation
             const auto state = CoreWindow::GetForCurrentThread().GetKeyState(winrt::Windows::System::VirtualKey::Shift);
             if (WI_IsFlagSet(state, CoreVirtualKeyStates::Down))
             {
-                Search.raise(Text(), !GoForward(), CaseSensitive());
+                Search.raise(Text(), !GoForward(), CaseSensitive(), RegularExpression());
             }
             else
             {
-                Search.raise(Text(), GoForward(), CaseSensitive());
+                Search.raise(Text(), GoForward(), CaseSensitive(), RegularExpression());
             }
             e.Handled(true);
         }
@@ -340,7 +346,7 @@ namespace winrt::Microsoft::Terminal::Control::implementation
         }
 
         // kick off search
-        Search.raise(Text(), GoForward(), CaseSensitive());
+        Search.raise(Text(), GoForward(), CaseSensitive(), RegularExpression());
     }
 
     // Method Description:
@@ -361,7 +367,7 @@ namespace winrt::Microsoft::Terminal::Control::implementation
         }
 
         // kick off search
-        Search.raise(Text(), GoForward(), CaseSensitive());
+        Search.raise(Text(), GoForward(), CaseSensitive(), RegularExpression());
     }
 
     // Method Description:
@@ -399,7 +405,7 @@ namespace winrt::Microsoft::Terminal::Control::implementation
     // - <none>
     void SearchBoxControl::TextBoxTextChanged(winrt::Windows::Foundation::IInspectable const& /*sender*/, winrt::Windows::UI::Xaml::RoutedEventArgs const& /*e*/)
     {
-        SearchChanged.raise(Text(), GoForward(), CaseSensitive());
+        SearchChanged.raise(Text(), GoForward(), CaseSensitive(), RegularExpression());
     }
 
     // Method Description:
@@ -411,7 +417,12 @@ namespace winrt::Microsoft::Terminal::Control::implementation
     // - <none>
     void SearchBoxControl::CaseSensitivityButtonClicked(winrt::Windows::Foundation::IInspectable const& /*sender*/, winrt::Windows::UI::Xaml::RoutedEventArgs const& /*e*/)
     {
-        SearchChanged.raise(Text(), GoForward(), CaseSensitive());
+        SearchChanged.raise(Text(), GoForward(), CaseSensitive(), RegularExpression());
+    }
+
+    void SearchBoxControl::RegexButtonClicked(winrt::Windows::Foundation::IInspectable const& /*sender*/, winrt::Windows::UI::Xaml::RoutedEventArgs const& /*e*/)
+    {
+        SearchChanged.raise(Text(), GoForward(), CaseSensitive(), RegularExpression());
     }
 
     // Method Description:
