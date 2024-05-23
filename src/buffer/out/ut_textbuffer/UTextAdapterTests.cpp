@@ -50,15 +50,16 @@ class UTextAdapterTests
         };
 
         auto expected = std::vector{ s(0, 2), s(8, 10) };
-        auto actual = buffer.SearchText(L"abc", SearchFlag::None);
+        std::vector<til::point_span> actual;
+        VERIFY_IS_TRUE(buffer.SearchText(L"abc", SearchFlag::None, actual));
         VERIFY_ARE_EQUAL(expected, actual);
 
         expected = std::vector{ s(5, 5) };
-        actual = buffer.SearchText(L"𝒷", SearchFlag::None);
+        VERIFY_IS_TRUE(buffer.SearchText(L"𝒷", SearchFlag::None, actual));
         VERIFY_ARE_EQUAL(expected, actual);
 
         expected = std::vector{ s(12, 15) };
-        actual = buffer.SearchText(L"ネコ", SearchFlag::None);
+        VERIFY_IS_TRUE(buffer.SearchText(L"ネコ", SearchFlag::None, actual));
         VERIFY_ARE_EQUAL(expected, actual);
     }
 };

@@ -1703,6 +1703,7 @@ namespace winrt::Microsoft::Terminal::Control::implementation
             .TotalMatches = totalMatches,
             .CurrentMatch = currentMatch,
             .SearchInvalidated = searchInvalidated,
+            .SearchRegexInvalid = !_searcher.IsOk(),
         };
     }
 

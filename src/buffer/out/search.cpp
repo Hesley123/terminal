@@ -144,3 +144,8 @@ ptrdiff_t Search::CurrentMatch() const noexcept
 {
     return _index;
 }
+
+bool Search::IsOk() const noexcept
+{
+    return _ok;
+}

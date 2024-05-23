@@ -515,7 +515,8 @@ namespace winrt::Microsoft::Terminal::Control::implementation
     double SearchBoxControl::_GetStatusMaxWidth()
     {
         const auto fontSize = StatusBox().FontSize();
-        const auto maxLength = std::max({ _TextWidth(_FormatStatus(-1, -1), fontSize),
+        const auto maxLength = std::max({ _TextWidth(RS_(L"SearchRegexInvalid"), fontSize),
+                                          _TextWidth(_FormatStatus(-1, -1), fontSize),
                                           _TextWidth(_FormatStatus(0, -1), fontSize),
                                           _TextWidth(_FormatStatus(MaximumTotalResultsToShowInStatus, MaximumTotalResultsToShowInStatus - 1), fontSize),
                                           _TextWidth(_FormatStatus(MaximumTotalResultsToShowInStatus + 1, MaximumTotalResultsToShowInStatus - 1), fontSize),
@@ -532,9 +533,17 @@ namespace winrt::Microsoft::Terminal::Control::implementation
     // - currentMatch - the index of the current match (0-based)
     // Return Value:
     // - <none>
-    void SearchBoxControl::SetStatus(int32_t totalMatches, int32_t currentMatch)
+    void SearchBoxControl::SetStatus(int32_t totalMatches, int32_t currentMatch, bool searchRegexInvalid)
     {
-        const auto status = _FormatStatus(totalMatches, currentMatch);
+        hstring status;
+        if (searchRegexInvalid)
+        {
+            status = RS_(L"SearchRegexInvalid");
+        }
+        else
+        {
+            status = _FormatStatus(totalMatches, currentMatch);
+        }
         StatusBox().Text(status);
     }
 

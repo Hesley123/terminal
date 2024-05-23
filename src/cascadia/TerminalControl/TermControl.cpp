@@ -3619,7 +3619,7 @@ namespace winrt::Microsoft::Terminal::Control::implementation
             return;
         }
 
-        _searchBox->SetStatus(results.TotalMatches, results.CurrentMatch);
+        _searchBox->SetStatus(results.TotalMatches, results.CurrentMatch, results.SearchRegexInvalid);
 
         if (results.SearchInvalidated)
         {

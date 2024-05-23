@@ -54,6 +54,7 @@ namespace Microsoft.Terminal.Control
         Int32 TotalMatches;
         Int32 CurrentMatch;
         Boolean SearchInvalidated;
+        Boolean SearchRegexInvalid;
     };
 
     [default_interface] runtimeclass SelectionColor
