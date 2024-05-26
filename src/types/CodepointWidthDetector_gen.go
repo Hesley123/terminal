@@ -44,7 +44,8 @@ const (
 	cbCount
 )
 
-// Ω is what UAX #29 writes as "÷". ÷ is not a valid identifier in Go.
+// UAX #29 uses "A ÷ B" to indicate that there's a potential break opportunity between A and B.
+// But ÷ is not a valid identifier in Go so we use Ω which is.
 var Ω uint8 = 0b11
 
 // JoinRules doesn't quite follow UAX #29, as it states:
@@ -52,7 +53,7 @@ var Ω uint8 = 0b11
 //
 // I completely agree, however it makes the implementation complex and slow and it only benefits what can be considered
 // edge cases in the context of terminals. By using a lookup table anyway this results in a >100MB/s throughput,
-// before adding any fast-passes whatsoever. This is at least 2x as fast as any standards conforming implementation.
+// before adding any fast-passes whatsoever. This is 2x as fast as any standards conforming implementation I found.
 //
 // This affects the following rules:
 // * GB9c: \p{InCB=Consonant} [\p{InCB=Extend}\p{InCB=Linker}]* \p{InCB=Linker} [\p{InCB=Extend}\p{InCB=Linker}]* × \p{InCB=Consonant}
@@ -79,7 +80,7 @@ var Ω uint8 = 0b11
 //   Imagine a shell that doesn't understand graphemes for instance. You type 2 flags (= 4 RIs) and backspace.
 //   You'll now have 3 RIs. If iterating through it forwards, you'd join the first two, then get 1 lone RI at the end,
 //   whereas if you iterate backwards you'd join the last two, then get 1 lone RI at the start.
-//   This assymmetry may have some subtle effects, but I suspect that it's still rare enough to not matter much.
+//   This asymmetry may have some subtle effects, but I suspect that it's still rare enough to not matter much.
 //
 // This is a great reference for the resulting table:
 // https://www.unicode.org/Public/UCD/latest/ucd/auxiliary/GraphemeBreakTest.html
