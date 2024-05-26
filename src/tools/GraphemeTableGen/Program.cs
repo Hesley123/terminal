@@ -7,6 +7,8 @@ using System;
 using System.Text;
 using System.Xml.Serialization;
 
+using TrieType = uint;
+
 // UAX #29 uses "A ÷ B" to indicate that there's a potential break opportunity between A and B.
 // But ÷ is not a valid identifier in Go so we use Ω which is.
 const byte Ω = 0b11;
@@ -107,12 +109,12 @@ using (var reader = new StreamReader(args[1]))
     ucd = (UCD)serializer.Deserialize(reader);
 }
 
-var values = extractValuesFromUCD(ucd);
+var values = ExtractValuesFromUCD(ucd);
 
 // More stages = Less size. The trajectory roughly follows a+b*c^stages, where c < 1.
 // 4 still gives ~30% savings over 3 stages and going beyond 5 gives diminishing returns (<10%).
 var trie = buildBestTrie(values, 2, 8, 4);
-var rules = prepareRulesTable(JoinRules);
+var rules = PrepareRulesTable(JoinRules);
 var totalSize = trie.TotalSize + rulesSize(rules);
 
 foreach (var cp in values.Keys)
@@ -192,6 +194,173 @@ buf.Append("// clang-format on\n");
 
 Console.Write(buf);
 
+List<TrieType> ExtractValuesFromUCD(UCD ucd)
+{
+    var values = new TrieType[1114112];
+    Array.Fill(values, TrieValue(ClusterBreak.Other, CharacterWidth.Narrow));
+
+    foreach (var group in ucd.Repertoire.Group)
+    {
+        foreach (var ch in group.Char)
+        {
+            var generalCategory = ch.GeneralCategory.Coalesce(group.GeneralCategory);
+            var graphemeClusterBreak = ch.GraphemeClusterBreak.Coalesce(group.GraphemeClusterBreak);
+            var indicConjunctBreak = ch.IndicConjunctBreak.Coalesce(group.IndicConjunctBreak);
+            var extendedPictographic = ch.ExtendedPictographic.Coalesce(group.ExtendedPictographic);
+            var eastAsian = ch.EastAsian.Coalesce(group.EastAsian);
+
+            var cp = ch.Codepoint.Value;
+            var firstCp = ch.FirstCodepoint.Value;
+            var lastCp = ch.LastCodepoint.Value;
+            if (cp != 0)
+            {
+                firstCp = cp;
+                lastCp = cp;
+            }
+
+            ClusterBreak cb;
+            switch (graphemeClusterBreak)
+            {
+                case "XX": // Anything else
+                    cb = ClusterBreak.Other; break;
+                case "CR": case "LF": case "CN": // Carriage Return, Line Feed, Control
+                    // We ignore GB3 which demands that CR × LF do not break apart, because
+                    // a) these control characters won't normally reach our text storage
+                    // b) otherwise we're in a raw write mode and historically conhost stores them in separate cells
+                    cb = ClusterBreak.Control; break;
+                case "EX": case "SM": // Extend, SpacingMark
+                    cb = ClusterBreak.Extend; break;
+                case "PP": // Prepend
+                    cb = ClusterBreak.Prepend; break;
+                case "ZWJ": // Zero Width Joiner
+                    cb = ClusterBreak.ZWJ; break;
+                case "RI": // Regional Indicator
+                    cb = ClusterBreak.RI; break;
+                case "L": // Hangul Syllable Type L
+                    cb = ClusterBreak.HangulL; break;
+                case "V": // Hangul Syllable Type V
+                    cb = ClusterBreak.HangulV; break;
+                case "T": // Hangul Syllable Type T
+                    cb = ClusterBreak.HangulT; break;
+                case "LV": // Hangul Syllable Type LV
+                    cb = ClusterBreak.HangulLV; break;
+                case "LVT": // Hangul Syllable Type LVT
+                    cb = ClusterBreak.HangulLVT; break;
+                default:
+                    throw new Exception($"Unrecognized GCB {graphemeClusterBreak} for {firstCp} to {lastCp}");
+            }
+
+            if (extendedPictographic == "Y")
+            {
+                // Currently every single Extended_Pictographic codepoint happens to be GCB=XX.
+                // This is fantastic for us because it means we can stuff it into the ClusterBreak enum
+                // and treat it as an alias of EXTEND, but with the special GB11 properties.
+                if (cb != ClusterBreak.Other)
+                {
+                    throw new Exception($"Unexpected GCB {graphemeClusterBreak} with ExtPict=Y for {firstCp} to {lastCp}");
+                }
+                cb = ClusterBreak.ExtPic;
+            }
+
+            switch (indicConjunctBreak)
+            {
+                case "None": case "Extend":
+                    break;
+                case "Linker":
+                    // Similarly here, we can treat it as an alias for EXTEND, but with the GB9c properties.
+                    if (cb != ClusterBreak.Extend)
+                    {
+                        throw new Exception($"Unexpected GCB {graphemeClusterBreak} with InCB=Linker for {firstCp} to {lastCp}");
+                    }
+                    cb = ClusterBreak.InCBLinker;
+                    break;
+                case "Consonant":
+                    // Similarly here, we can treat it as an alias for OTHER, but with the GB9c properties.
+                    if (cb != ClusterBreak.Other)
+                    {
+                        throw new Exception($"Unexpected GCB {graphemeClusterBreak} with InCB=Consonant for {firstCp} to {lastCp}");
+                    }
+                    cb = ClusterBreak.InCBConsonant;
+                    break;
+                default:
+                    throw new Exception($"Unrecognized InCB {indicConjunctBreak} for {firstCp} to {lastCp}");
+            }
+
+            CharacterWidth width;
+            switch (eastAsian)
+            {
+                case "N": case "Na": case "H": // neutral, narrow, half-width
+                    width = CharacterWidth.Narrow; break;
+                case "F": case "W": // full-width, wide
+                    width = CharacterWidth.Wide; break;
+                case "A": // ambiguous
+                    width = CharacterWidth.Ambiguous; break;
+                default:
+                    throw new Exception($"Unrecognized ea {eastAsian} for {firstCp} to {lastCp}");
+            }
+            // There's no "ea" attribute for "zero width" so we need to do that ourselves. This matches:
+            //   Mc: Mark, spacing combining
+            //   Me: Mark, enclosing
+            //   Mn: Mark, non-spacing
+            //   Cf: Control, forma
+            if (generalCategory.StartsWith("M") || generalCategory == "Cf")
+            {
+                width = CharacterWidth.ZeroWidth;
+            }
+
+            Array.Fill(values[firstCp..(lastCp+1)], TrieValue(cb, width));
+        }
+    }
+
+    // Box-drawing and block elements are ambiguous according to their EastAsian attribute,
+    // but by convention terminals always consider them to be narrow.
+    Array.Fill(values[0x2500..(0x259F+1)], TrieValue(ClusterBreak.Other, CharacterWidth.Narrow));
+    // U+FE0F Variation Selector-16 is used to turn unqualified Emojis into qualified ones.
+    // By convention, this also turns them from being ambiguous, = narrow by default, into wide ones.
+    Array.Fill(values[0xFE0F..(0xFE0F+1)], TrieValue(ClusterBreak.Extend, CharacterWidth.Wide));
+
+    return values.ToList();
+}
+
+TrieType TrieValue(ClusterBreak cb, CharacterWidth width) {
+    return (TrieType)((byte)(cb) | (byte)(width)<<6);
+}
+
+
+uint[][] PrepareRulesTable(byte[][][] rules)
+{
+    uint[][] compressed = new uint[rules.Length][];
+    for (int i = 0; i < compressed.Length; i++)
+    {
+        compressed[i] = new uint[16];
+    }
+
+    foreach (var (table, prevIndex) in rules.Select((v, i) => (v, i)))
+    {
+        foreach (var (row, lead) in table.Select((v, i) => (v, i)))
+        {
+            if (table[lead].Length > 16)
+            {
+                throw new Exception("Can't pack row into 32 bits");
+            }
+
+            uint nextIndices = 0;
+            foreach (var (nextIndex, trail) in row.Select((v, i) => (v, i)))
+            {
+                if (nextIndex > Ω)
+                {
+                    throw new Exception("Can't pack table index into 2 bits");
+                }
+                nextIndices |= (uint)(nextIndex << (trail * 2));
+            }
+
+            compressed[prevIndex][lead] = nextIndices;
+        }
+    }
+
+    return compressed;
+}
+
 public enum CharacterWidth
 {
     ZeroWidth,
@@ -222,7 +391,7 @@ public enum ClusterBreak
 
 public class HexInt
 {
-    private int Value { get; set; }
+    public int Value { get; set; }
 
     public HexInt(string hex)
     {
@@ -294,127 +463,14 @@ public class UCD
     public Repertoire Repertoire { get; set; }
 }
 
-type TrieType uint32
-
-func extractValuesFromUCD(ucd *UCD) ([]TrieType, error) {
-    values := make([]TrieType, 1114112)
-    fillRange(values, trieValue(cbOther, cwNarrow))
-
-    for _, group := range ucd.Repertoire.Group {
-        for _, char := range group.Char {
-            generalCategory := coalesce(char.GeneralCategory, group.GeneralCategory)
-            graphemeClusterBreak := coalesce(char.GraphemeClusterBreak, group.GraphemeClusterBreak)
-            indicConjunctBreak := coalesce(char.IndicConjunctBreak, group.IndicConjunctBreak)
-            extendedPictographic := coalesce(char.ExtendedPictographic, group.ExtendedPictographic)
-            eastAsian := coalesce(char.EastAsian, group.EastAsian)
-
-            firstCp, lastCp := int(char.FirstCodepoint), int(char.LastCodepoint)
-            if char.Codepoint != 0 {
-                firstCp, lastCp = int(char.Codepoint), int(char.Codepoint)
-            }
-
-            var cb ClusterBreak
-            switch graphemeClusterBreak {
-            case "XX": // Anything else
-                cb = cbOther
-            case "CR", "LF", "CN": // Carriage Return, Line Feed, Control
-                // We ignore GB3 which demands that CR × LF do not break apart, because
-                // a) these control characters won't normally reach our text storage
-                // b) otherwise we're in a raw write mode and historically conhost stores them in separate cells
-                cb = cbControl
-            case "EX", "SM": // Extend, SpacingMark
-                cb = cbExtend
-            case "PP": // Prepend
-                cb = cbPrepend
-            case "ZWJ": // Zero Width Joiner
-                cb = cbZWJ
-            case "RI": // Regional Indicator
-                cb = cbRI
-            case "L": // Hangul Syllable Type L
-                cb = cbHangulL
-            case "V": // Hangul Syllable Type V
-                cb = cbHangulV
-            case "T": // Hangul Syllable Type T
-                cb = cbHangulT
-            case "LV": // Hangul Syllable Type LV
-                cb = cbHangulLV
-            case "LVT": // Hangul Syllable Type LVT
-                cb = cbHangulLVT
-            default:
-                return nil, fmt.Errorf("unrecognized GCB %s for %U to %U", graphemeClusterBreak, firstCp, lastCp)
-            }
-            if extendedPictographic == "Y" {
-                // Currently every single Extended_Pictographic codepoint happens to be GCB=XX.
-                // This is fantastic for us because it means we can stuff it into the ClusterBreak enum
-                // and treat it as an alias of EXTEND, but with the special GB11 properties.
-                if cb != cbOther {
-                    return nil, fmt.Errorf("unexpected GCB %s with ExtPict=Y for %U to %U", graphemeClusterBreak, firstCp, lastCp)
-                }
-                cb = cbExtPic
-            }
-            switch indicConjunctBreak {
-            case "None", "Extend":
-                break
-            case "Linker":
-                // Similarly here, we can treat it as an alias for EXTEND, but with the GB9c properties.
-                if cb != cbExtend {
-                    return nil, fmt.Errorf("unexpected GCB %s with InCB=Linker for %U to %U", graphemeClusterBreak, firstCp, lastCp)
-                }
-                cb = cbInCBLinker
-            case "Consonant":
-                // Similarly here, we can treat it as an alias for OTHER, but with the GB9c properties.
-                if cb != cbOther {
-                    return nil, fmt.Errorf("unexpected GCB %s with InCB=Consonant for %U to %U", graphemeClusterBreak, firstCp, lastCp)
-                }
-                cb = cbInCBConsonant
-            default:
-                return nil, fmt.Errorf("unrecognized InCB %s for %U to %U", indicConjunctBreak, firstCp, lastCp)
-            }
-
-            var width CharacterWidth
-            switch eastAsian {
-            case "N", "Na", "H": // neutral, narrow, half-width
-                width = cwNarrow
-            case "F", "W": // full-width, wide
-                width = cwWide
-            case "A": // ambiguous
-                width = cwAmbiguous
-            default:
-                return nil, fmt.Errorf("unrecognized ea %s for %U to %U", eastAsian, firstCp, lastCp)
-            }
-            // There's no "ea" attribute for "zero width" so we need to do that ourselves. This matches:
-            //   Mc: Mark, spacing combining
-            //   Me: Mark, enclosing
-            //   Mn: Mark, non-spacing
-            //   Cf: Control, format
-            if strings.HasPrefix(generalCategory, "M") || generalCategory == "Cf" {
-                width = cwZeroWidth
-            }
-
-            fillRange(values[firstCp:lastCp+1], trieValue(cb, width))
-        }
+public static class StringExtensions
+{
+    public static string Coalesce(this string a, string b)
+    {
+        return string.IsNullOrEmpty(a) ? b : a;
     }
-
-    // Box-drawing and block elements are ambiguous according to their EastAsian attribute,
-    // but by convention terminals always consider them to be narrow.
-    fillRange(values[0x2500:0x259F+1], trieValue(cbOther, cwNarrow))
-    // U+FE0F Variation Selector-16 is used to turn unqualified Emojis into qualified ones.
-    // By convention, this also turns them from being ambiguous, = narrow by default, into wide ones.
-    fillRange(values[0xFE0F:0xFE0F+1], trieValue(cbExtend, cwWide))
-
-    return values, nil
 }
 
-func trieValue(cb ClusterBreak, width CharacterWidth) TrieType {
-    return TrieType(byte(cb) | byte(width)<<6)
-}
-
-func coalesce(a, b string) string {
-    if a != "" {
-        return a
-    }
-    return b
-}
 
 type Stage struct {
     Values []TrieType
@@ -571,42 +627,4 @@ func measureOverlap(prev, next []TrieType) int {
         }
     }
     return 0
-}
-
-func prepareRulesTable(rules [][][]uint8) [][]uint32 {
-    compressed := make([][]uint32, len(rules))
-    for i := range compressed {
-        compressed[i] = make([]uint32, 16)
-    }
-
-    for prevIndex, table := range rules {
-        for lead, row := range table {
-            if len(row) > 16 {
-                panic("can't pack row into 32 bits")
-            }
-
-            var nextIndices uint32
-            for trail, nextIndex := range row {
-                if nextIndex > Ω {
-                    panic("can't pack table index into 2 bits")
-                }
-                nextIndices |= uint32(nextIndex) << (trail * 2)
-            }
-
-            compressed[prevIndex][lead] = nextIndices
-        }
-    }
-
-    return compressed
-}
-
-func rulesSize(rules [][]uint32) int {
-    // Each rules item has the same length. Each item is 32 bits = 4 bytes.
-    return len(rules) * len(rules[0]) * 4
-}
-
-func fillRange[T any](s []T, v T) {
-    for i := range s {
-        s[i] = v
-    }
 }
