@@ -1,52 +1,15 @@
-package main
-
-import (
-    "bytes"
-    "encoding/xml"
-    "fmt"
-    "math"
-    "math/bits"
-    "os"
-    "slices"
-    "strconv"
-    "strings"
-    "time"
-    "unsafe"
-)
-
-type CharacterWidth int
-
-const (
-    cwZeroWidth CharacterWidth = iota
-    cwNarrow
-    cwWide
-    cwAmbiguous
-)
-
-type ClusterBreak int
-
-const (
-    cbOther         ClusterBreak = iota // GB999
-    cbControl                           // GB3, GB4, GB5 -- includes CR, LF
-    cbExtend                            // GB9, GB9a -- includes SpacingMark
-    cbRI                                // GB12, GB13
-    cbPrepend                           // GB9b
-    cbHangulL                           // GB6, GB7, GB8
-    cbHangulV                           // GB6, GB7, GB8
-    cbHangulT                           // GB6, GB7, GB8
-    cbHangulLV                          // GB6, GB7, GB8
-    cbHangulLVT                         // GB6, GB7, GB8
-    cbInCBLinker                        // GB9c
-    cbInCBConsonant                     // GB9c
-    cbExtPic                            // GB11
-    cbZWJ                               // GB9, GB11
-
-    cbCount
-)
+using Microsoft.VisualBasic;
+using static System.Net.Mime.MediaTypeNames;
+using static System.Runtime.InteropServices.JavaScript.JSType;
+using System.Diagnostics;
+using System.Runtime.Intrinsics.X86;
+using System;
+using System.Text;
+using System.Xml.Serialization;
 
 // UAX #29 uses "A ÷ B" to indicate that there's a potential break opportunity between A and B.
 // But ÷ is not a valid identifier in Go so we use Ω which is.
-var Ω uint8 = 0b11
+const byte Ω = 0b11;
 
 // JoinRules doesn't quite follow UAX #29, as it states:
 // > Note: Testing two adjacent characters is insufficient for determining a boundary.
@@ -84,201 +47,251 @@ var Ω uint8 = 0b11
 //
 // This is a great reference for the resulting table:
 // https://www.unicode.org/Public/UCD/latest/ucd/auxiliary/GraphemeBreakTest.html
-var JoinRules = [][][]uint8{
-    // Base table
-    {
-        /* | leading       -> trailing codepoint                                                                                                                                                            */
-        /* v               |  cbOther | cbControl | cbExtend |   cbRI   | cbPrepend | cbHangulL | cbHangulV | cbHangulT | cbHangulLV | cbHangulLVT | cbInCBLinker | cbInCBConsonant | cbExtPic |   cbZWJ  | */
-        /* cbOther         | */ {Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */},
-        /* cbControl       | */ {Ω /* | */, Ω /*  | */, Ω /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, Ω /*   |    */, Ω /*     | */, Ω /* | */, Ω /* | */},
-        /* cbExtend        | */ {Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */},
-        /* cbRI            | */ {Ω /* | */, Ω /*  | */, 0 /* | */, 1 /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */},
-        /* cbPrepend       | */ {0 /* | */, Ω /*  | */, 0 /* | */, 0 /* | */, 0 /*  | */, 0 /*  | */, 0 /*  | */, 0 /*  |  */, 0 /*  |  */, 0 /*   |   */, 0 /*   |    */, 0 /*     | */, 0 /* | */, 0 /* | */},
-        /* cbHangulL       | */ {Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, 0 /*  | */, 0 /*  | */, Ω /*  |  */, 0 /*  |  */, 0 /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */},
-        /* cbHangulV       | */ {Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, 0 /*  | */, 0 /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */},
-        /* cbHangulT       | */ {Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, 0 /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */},
-        /* cbHangulLV      | */ {Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, 0 /*  | */, 0 /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */},
-        /* cbHangulLVT     | */ {Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, 0 /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */},
-        /* cbInCBLinker    | */ {Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, 0 /*     | */, Ω /* | */, 0 /* | */},
-        /* cbInCBConsonant | */ {Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */},
-        /* cbExtPic        | */ {Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */},
-        /* cbZWJ           | */ {Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, 0 /* | */, 0 /* | */},
-    },
-    // Once we have encountered a Regional Indicator pair we'll enter this table.
-    // It's a copy of the base table, but further Regional Indicator joins are forbidden.
-    {
-        /* | leading       -> trailing codepoint                                                                                                                                                            */
-        /* v               |  cbOther | cbControl | cbExtend |   cbRI   | cbPrepend | cbHangulL | cbHangulV | cbHangulT | cbHangulLV | cbHangulLVT | cbInCBLinker | cbInCBConsonant | cbExtPic |   cbZWJ  | */
-        /* cbOther         | */ {Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */},
-        /* cbControl       | */ {Ω /* | */, Ω /*  | */, Ω /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, Ω /*   |    */, Ω /*     | */, Ω /* | */, Ω /* | */},
-        /* cbExtend        | */ {Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */},
-        /* cbRI            | */ {Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */},
-        /* cbPrepend       | */ {0 /* | */, Ω /*  | */, 0 /* | */, 0 /* | */, 0 /*  | */, 0 /*  | */, 0 /*  | */, 0 /*  |  */, 0 /*  |  */, 0 /*   |   */, 0 /*   |    */, 0 /*     | */, 0 /* | */, 0 /* | */},
-        /* cbHangulL       | */ {Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, 0 /*  | */, 0 /*  | */, Ω /*  |  */, 0 /*  |  */, 0 /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */},
-        /* cbHangulV       | */ {Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, 0 /*  | */, 0 /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */},
-        /* cbHangulT       | */ {Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, 0 /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */},
-        /* cbHangulLV      | */ {Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, 0 /*  | */, 0 /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */},
-        /* cbHangulLVT     | */ {Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, 0 /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */},
-        /* cbInCBLinker    | */ {Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, 0 /*     | */, Ω /* | */, 0 /* | */},
-        /* cbInCBConsonant | */ {Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */},
-        /* cbExtPic        | */ {Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */},
-        /* cbZWJ           | */ {Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, 0 /* | */, 0 /* | */},
-    },
-}
+var JoinRules = new byte[][][]
+{
+	// Base table
+	[
+		/* | leading       -> trailing codepoint                                                                                                                                                            */
+		/* v               |  cbOther | cbControl | cbExtend |   cbRI   | cbPrepend | cbHangulL | cbHangulV | cbHangulT | cbHangulLV | cbHangulLVT | cbInCBLinker | cbInCBConsonant | cbExtPic |   cbZWJ  | */
+		/* cbOther         | */ [Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */],
+		/* cbControl       | */ [Ω /* | */, Ω /*  | */, Ω /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, Ω /*   |    */, Ω /*     | */, Ω /* | */, Ω /* | */],
+		/* cbExtend        | */ [Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */],
+		/* cbRI            | */ [Ω /* | */, Ω /*  | */, 0 /* | */, 1 /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */],
+		/* cbPrepend       | */ [0 /* | */, Ω /*  | */, 0 /* | */, 0 /* | */, 0 /*  | */, 0 /*  | */, 0 /*  | */, 0 /*  |  */, 0 /*  |  */, 0 /*   |   */, 0 /*   |    */, 0 /*     | */, 0 /* | */, 0 /* | */],
+		/* cbHangulL       | */ [Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, 0 /*  | */, 0 /*  | */, Ω /*  |  */, 0 /*  |  */, 0 /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */],
+		/* cbHangulV       | */ [Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, 0 /*  | */, 0 /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */],
+		/* cbHangulT       | */ [Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, 0 /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */],
+		/* cbHangulLV      | */ [Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, 0 /*  | */, 0 /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */],
+		/* cbHangulLVT     | */ [Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, 0 /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */],
+		/* cbInCBLinker    | */ [Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, 0 /*     | */, Ω /* | */, 0 /* | */],
+		/* cbInCBConsonant | */ [Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */],
+		/* cbExtPic        | */ [Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */],
+		/* cbZWJ           | */ [Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, 0 /* | */, 0 /* | */],
+	],
+	// Once we have encountered a Regional Indicator pair we'll enter this table.
+	// It's a copy of the base table, but further Regional Indicator joins are forbidden.
+	[
+		/* | leading       -> trailing codepoint                                                                                                                                                            */
+		/* v               |  cbOther | cbControl | cbExtend |   cbRI   | cbPrepend | cbHangulL | cbHangulV | cbHangulT | cbHangulLV | cbHangulLVT | cbInCBLinker | cbInCBConsonant | cbExtPic |   cbZWJ  | */
+		/* cbOther         | */ [Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */],
+		/* cbControl       | */ [Ω /* | */, Ω /*  | */, Ω /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, Ω /*   |    */, Ω /*     | */, Ω /* | */, Ω /* | */],
+		/* cbExtend        | */ [Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */],
+		/* cbRI            | */ [Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */],
+		/* cbPrepend       | */ [0 /* | */, Ω /*  | */, 0 /* | */, 0 /* | */, 0 /*  | */, 0 /*  | */, 0 /*  | */, 0 /*  |  */, 0 /*  |  */, 0 /*   |   */, 0 /*   |    */, 0 /*     | */, 0 /* | */, 0 /* | */],
+		/* cbHangulL       | */ [Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, 0 /*  | */, 0 /*  | */, Ω /*  |  */, 0 /*  |  */, 0 /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */],
+		/* cbHangulV       | */ [Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, 0 /*  | */, 0 /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */],
+		/* cbHangulT       | */ [Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, 0 /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */],
+		/* cbHangulLV      | */ [Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, 0 /*  | */, 0 /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */],
+		/* cbHangulLVT     | */ [Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, 0 /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */],
+		/* cbInCBLinker    | */ [Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, 0 /*     | */, Ω /* | */, 0 /* | */],
+		/* cbInCBConsonant | */ [Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */],
+		/* cbExtPic        | */ [Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, Ω /* | */, 0 /* | */],
+		/* cbZWJ           | */ [Ω /* | */, Ω /*  | */, 0 /* | */, Ω /* | */, Ω /*  | */, Ω /*  | */, Ω /*  | */, Ω /*  |  */, Ω /*  |  */, Ω /*   |   */, 0 /*   |    */, Ω /*     | */, 0 /* | */, 0 /* | */],
+	],
+};
 
-type HexInt int
-
-func (h *HexInt) UnmarshalXMLAttr(attr xml.Attr) error {
-    v, err := strconv.ParseUint(attr.Value, 16, 32)
-    if err != nil {
-        return err
-    }
-    *h = HexInt(v)
-    return nil
-}
-
-type UCD struct {
-    Description string `xml:"description"`
-    Repertoire  struct {
-        Group []struct {
-            GeneralCategory      string `xml:"gc,attr"`
-            GraphemeClusterBreak string `xml:"GCB,attr"`
-            IndicConjunctBreak   string `xml:"InCB,attr"`
-            ExtendedPictographic string `xml:"ExtPict,attr"`
-            EastAsian            string `xml:"ea,attr"`
-
-            // This maps the following tags:
-            //   <char>, <reserved>, <surrogate>, <noncharacter>
-            Char []struct {
-                Codepoint      HexInt `xml:"cp,attr"`
-                FirstCodepoint HexInt `xml:"first-cp,attr"`
-                LastCodepoint  HexInt `xml:"last-cp,attr"`
-
-                GeneralCategory      string `xml:"gc,attr"`
-                GraphemeClusterBreak string `xml:"GCB,attr"`
-                IndicConjunctBreak   string `xml:"InCB,attr"`
-                ExtendedPictographic string `xml:"ExtPict,attr"`
-                EastAsian            string `xml:"ea,attr"`
-            } `xml:",any"`
-        } `xml:"group"`
-    } `xml:"repertoire"`
-}
-
-func main() {
-    if err := run(); err != nil {
-        fmt.Println(err)
-        os.Exit(1)
-    }
-}
-
-func run() error {
-    if len(os.Args) <= 1 {
-        fmt.Println(`Usage:
-    go run CodepointWidthDetector_gen.go <path to ucd.nounihan.grouped.xml>
+if (args.Length <= 1)
+{
+    Console.WriteLine(@"Usage:
+    dotnet run -- <path to ucd.nounihan.grouped.xml>
 
 You can download the latest ucd.nounihan.grouped.xml from:
-    https://www.unicode.org/Public/UCD/latest/ucdxml/ucd.nounihan.grouped.zip`)
-        os.Exit(1)
+    https://www.unicode.org/Public/UCD/latest/ucdxml/ucd.nounihan.grouped.zip");
+    Environment.Exit(1);
+}
+
+UCD ucd;
+var serializer = new XmlSerializer(typeof(UCD));
+using (var reader = new StreamReader(args[1]))
+{
+    ucd = (UCD)serializer.Deserialize(reader);
+}
+
+var values = extractValuesFromUCD(ucd);
+
+// More stages = Less size. The trajectory roughly follows a+b*c^stages, where c < 1.
+// 4 still gives ~30% savings over 3 stages and going beyond 5 gives diminishing returns (<10%).
+var trie = buildBestTrie(values, 2, 8, 4);
+var rules = prepareRulesTable(JoinRules);
+var totalSize = trie.TotalSize + rulesSize(rules);
+
+foreach (var cp in values.Keys)
+{
+    var expected = values[cp];
+    TrieType v = 0;
+    foreach (var s in trie.Stages)
+    {
+        v = s.Values[(int)v + ((cp >> s.Shift) & s.Mask)];
     }
-
-    data, err := os.ReadFile(os.Args[1])
-    if err != nil {
-        return fmt.Errorf("failed to read XML: %w", err)
+    if (v != expected)
+    {
+        throw new Exception($"trie sanity check failed for {cp:X}");
     }
+}
 
-    ucd := &UCD{}
-    err = xml.Unmarshal(data, ucd)
-    if err != nil {
-        return fmt.Errorf("failed to parse XML: %w", err)
+var buf = new StringBuilder();
+
+buf.Append("// Generated by CodepointWidthDetector_gen.go\n");
+buf.AppendFormat("// on %s, from %s, %d bytes\n", time.Now().UTC().Format(time.RFC3339), ucd.Description, totalSize);
+buf.Append("// clang-format off\n");
+
+for (var [i, s] : trie.Stages) {
+    width := 16;
+    if (i != 0) {
+        width = s.Mask + 1;
     }
-
-    values, err := extractValuesFromUCD(ucd)
-    if err != nil {
-        return err
-    }
-
-    // More stages = Less size. The trajectory roughly follows a+b*c^stages, where c < 1.
-    // 4 still gives ~30% savings over 3 stages and going beyond 5 gives diminishing returns (<10%).
-    trie := buildBestTrie(values, 2, 8, 4)
-    rules := prepareRulesTable(JoinRules)
-    totalSize := trie.TotalSize + rulesSize(rules)
-
-    for cp, expected := range values {
-        var v TrieType
-        for _, s := range trie.Stages {
-            v = s.Values[int(v)+((cp>>s.Shift)&s.Mask)]
+    buf.AppendFormat("static constexpr uint%d_t s_stage%d[] = {", s.Bits, i+1);
+    for (var [j, value] : s.Values) {
+        if (j%width == 0) {
+            buf.Append("\n   ");
         }
-        if v != expected {
-            return fmt.Errorf("trie sanity check failed for %U", cp)
-        }
+        buf.AppendFormat(" %#0*x,", s.Bits/4, value);
     }
+    buf.Append("\n};\n");
+}
 
-    buf := &strings.Builder{}
-    add := func(format string, a ...any) {
-        _, _ = fmt.Fprintf(buf, format, a...)
+buf.Append("static constexpr uint32_t s_joinRules[%d][%d] = {\n", len(rules), len(rules[0]));
+for (var table : rules) {
+    buf.Append("    {\n");
+    for _, r := range table {
+        buf.AppendFormat("        %#032b,\n", r);
     }
+    buf.Append("    },\n");
+}
+buf.Append("};\n");
 
-    add("// Generated by CodepointWidthDetector_gen.go\n")
-    add("// on %s, from %s, %d bytes\n", time.Now().UTC().Format(time.RFC3339), ucd.Description, totalSize)
-    add("// clang-format off\n")
-
-    for i, s := range trie.Stages {
-        width := 16
-        if i != 0 {
-            width = s.Mask + 1
-        }
-        add("static constexpr uint%d_t s_stage%d[] = {", s.Bits, i+1)
-        for j, value := range s.Values {
-            if j%width == 0 {
-                add("\n   ")
-            }
-            add(" %#0*x,", s.Bits/4, value)
-        }
-        add("\n};\n")
+buf.AppendFormat("constexpr uint%d_t ucdLookup(const char32_t cp) noexcept\n", trie.Stages[len(trie.Stages)-1].Bits);
+buf.Append("{\n");
+for (var [i, s] : trie.Stages) {
+    buf.AppendFormat("    const auto s%d = s_stage%d[", i+1, i+1);
+    if i == 0 {
+        buf.AppendFormat("cp >> %d", s.Shift);
+    } else {
+        buf.AppendFormat("s%d + ((cp >> %d) & %d)", i, s.Shift, s.Mask);
     }
+    buf.Append("];\n");
+}
+buf.AppendFormat("    return s%d;\n", len(trie.Stages));
+buf.Append("}\n");
 
-    add("static constexpr uint32_t s_joinRules[%d][%d] = {\n", len(rules), len(rules[0]))
-    for _, table := range rules {
-        add("    {\n")
-        for _, r := range table {
-            add("        %#032b,\n", r)
-        }
-        add("    },\n")
+buf.Append("constexpr uint8_t ucdGraphemeJoins(const uint8_t state, const uint8_t lead, const uint8_t trail) noexcept\n");
+buf.Append("{\n");
+buf.Append("    const auto l = lead & 15;\n");
+buf.Append("    const auto t = trail & 15;\n");
+buf.AppendFormat("    return (s_joinRules[state][l] >> (t * %d)) & %d;\n", bits.Len8(Ω), Ω);
+buf.Append("}\n");
+buf.Append("constexpr bool ucdGraphemeDone(const uint8_t state) noexcept\n");
+buf.Append("{\n");
+buf.Append("    return state == %d;\n", Ω);
+buf.Append("}\n");
+buf.Append("constexpr int ucdToCharacterWidth(const uint8_t val) noexcept\n");
+buf.Append("{\n");
+buf.Append("    return val >> 6;\n");
+buf.Append("}\n");
+buf.Append("// clang-format on\n");
+
+Console.Write(buf);
+
+public enum CharacterWidth
+{
+    ZeroWidth,
+    Narrow,
+    Wide,
+    Ambiguous
+}
+
+public enum ClusterBreak
+{
+    Other,         // GB999
+    Control,       // GB3, GB4, GB5 -- includes CR, LF
+    Extend,        // GB9, GB9a -- includes SpacingMark
+    RI,            // GB12, GB13
+    Prepend,       // GB9b
+    HangulL,       // GB6, GB7, GB8
+    HangulV,       // GB6, GB7, GB8
+    HangulT,       // GB6, GB7, GB8
+    HangulLV,      // GB6, GB7, GB8
+    HangulLVT,     // GB6, GB7, GB8
+    InCBLinker,    // GB9c
+    InCBConsonant, // GB9c
+    ExtPic,        // GB11
+    ZWJ,           // GB9, GB11
+
+    Count
+}
+
+public class HexInt
+{
+    private int Value { get; set; }
+
+    public HexInt(string hex)
+    {
+        Value = Convert.ToInt32(hex, 16);
     }
-    add("};\n")
+}
 
-    add("constexpr uint%d_t ucdLookup(const char32_t cp) noexcept\n", trie.Stages[len(trie.Stages)-1].Bits)
-    add("{\n")
-    for i, s := range trie.Stages {
-        add("    const auto s%d = s_stage%d[", i+1, i+1)
-        if i == 0 {
-            add("cp >> %d", s.Shift)
-        } else {
-            add("s%d + ((cp >> %d) & %d)", i, s.Shift, s.Mask)
-        }
-        add("];\n")
-    }
-    add("    return s%d;\n", len(trie.Stages))
-    add("}\n")
+public class Char
+{
+    [XmlAttribute("cp")]
+    public HexInt Codepoint { get; set; }
 
-    add("constexpr uint8_t ucdGraphemeJoins(const uint8_t state, const uint8_t lead, const uint8_t trail) noexcept\n")
-    add("{\n")
-    add("    const auto l = lead & 15;\n")
-    add("    const auto t = trail & 15;\n")
-    add("    return (s_joinRules[state][l] >> (t * %d)) & %d;\n", bits.Len8(Ω), Ω)
-    add("}\n")
-    add("constexpr bool ucdGraphemeDone(const uint8_t state) noexcept\n")
-    add("{\n")
-    add("    return state == %d;\n", Ω)
-    add("}\n")
-    add("constexpr int ucdToCharacterWidth(const uint8_t val) noexcept\n")
-    add("{\n")
-    add("    return val >> 6;\n")
-    add("}\n")
-    add("// clang-format on\n")
+    [XmlAttribute("first-cp")]
+    public HexInt FirstCodepoint { get; set; }
 
-    _, _ = os.Stdout.WriteString(buf.String())
-    return nil
+    [XmlAttribute("last-cp")]
+    public HexInt LastCodepoint { get; set; }
+
+    [XmlAttribute("gc")]
+    public string GeneralCategory { get; set; }
+
+    [XmlAttribute("GCB")]
+    public string GraphemeClusterBreak { get; set; }
+
+    [XmlAttribute("InCB")]
+    public string IndicConjunctBreak { get; set; }
+
+    [XmlAttribute("ExtPict")]
+    public string ExtendedPictographic { get; set; }
+
+    [XmlAttribute("ea")]
+    public string EastAsian { get; set; }
+}
+
+public class Group
+{
+    [XmlAttribute("gc")]
+    public string GeneralCategory { get; set; }
+
+    [XmlAttribute("GCB")]
+    public string GraphemeClusterBreak { get; set; }
+
+    [XmlAttribute("InCB")]
+    public string IndicConjunctBreak { get; set; }
+
+    [XmlAttribute("ExtPict")]
+    public string ExtendedPictographic { get; set; }
+
+    [XmlAttribute("ea")]
+    public string EastAsian { get; set; }
+
+    [XmlElement("char")]
+    public List<Char> Char { get; set; }
+}
+
+public class Repertoire
+{
+    [XmlElement("group")]
+    public List<Group> Group { get; set; }
+}
+
+[XmlRoot("UCD")]
+public class UCD
+{
+    [XmlElement("description")]
+    public string Description { get; set; }
+
+    [XmlElement("repertoire")]
+    public Repertoire Repertoire { get; set; }
 }
 
 type TrieType uint32
