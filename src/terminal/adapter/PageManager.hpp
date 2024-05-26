@@ -45,7 +45,7 @@ namespace Microsoft::Console::VirtualTerminal
         using Renderer = Microsoft::Console::Render::Renderer;
 
     public:
-        PageManager(ITerminalApi& api, Renderer& renderer) noexcept;
+        PageManager(ITerminalApi& api, Renderer* renderer) noexcept;
         void Reset();
         Page Get(const til::CoordType pageNumber) const;
         Page ActivePage() const;
@@ -58,7 +58,7 @@ namespace Microsoft::Console::VirtualTerminal
         TextBuffer& _getBuffer(const til::CoordType pageNumber, const til::size pageSize) const;
 
         ITerminalApi& _api;
-        Renderer& _renderer;
+        Renderer* _renderer;
         til::CoordType _activePageNumber = 1;
         til::CoordType _visiblePageNumber = 1;
         static constexpr til::CoordType MAX_PAGES = 6;

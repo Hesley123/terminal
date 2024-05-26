@@ -927,7 +927,6 @@ LCONTROL
 LCTRL
 lcx
 LEFTALIGN
-libpopcnt
 libsancov
 libtickit
 licate
@@ -1212,6 +1211,7 @@ NUMSCROLL
 NUnit
 nupkg
 NVIDIA
+NVT
 OACR
 objbase
 ocolor
@@ -1788,6 +1788,7 @@ TITLEISLINKNAME
 TJson
 TLambda
 TLDP
+tldr
 TLEN
 TMAE
 TMPF
@@ -1951,7 +1952,6 @@ vtio
 vtmode
 vtpipeterm
 vtpt
-vtrenderer
 VTRGB
 VTRGBTo
 vtseq
