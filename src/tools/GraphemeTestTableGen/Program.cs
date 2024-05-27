@@ -1,10 +1,5 @@
-using System;
-using System.IO;
-using System.Net.Http;
 using System.Text;
 using System.Text.RegularExpressions;
-using System.Threading.Tasks;
-
 
 string data;
 using (var client = new HttpClient())
@@ -45,6 +40,7 @@ while (await scanner.ReadLineAsync() is { } line)
                 const wchar_t* graphemes[4];
             };
             static constexpr GraphemeBreakTest s_graphemeBreakTests[] = {
+
             """
         );
     }
@@ -69,7 +65,7 @@ while (await scanner.ReadLineAsync() is { } line)
             continue;
         }
 
-        testString.Append(", \"");
+        testString.Append(", L\"");
 
         var codepoints = g.Split('×');
         foreach (var c in codepoints)
@@ -105,7 +101,7 @@ while (await scanner.ReadLineAsync() is { } line)
                     testString.Append($"\\x{i:X2}");
                     break;
                 case <= 0xffff:
-                    testString.Append($"\\u{i:X4}");
+                    testString.Append($"\\x{i:X4}");
                     break;
                 default:
                     testString.Append($"\\U{i:X8}");
@@ -116,8 +112,10 @@ while (await scanner.ReadLineAsync() is { } line)
         testString.Append("\"");
     }
 
-    testString.Append(" }},\r\n");
+    testString.Append(" },\r\n");
 }
 
 testString.Append("};\r\n");
+
+Console.OutputEncoding = System.Text.Encoding.UTF8;
 Console.Write(testString);
