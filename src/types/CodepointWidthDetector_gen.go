@@ -197,6 +197,11 @@ You can download the latest ucd.nounihan.grouped.xml from:
 		return err
 	}
 
+	for i, v := range values {
+		fmt.Println(i, v)
+	}
+	os.Exit(1)
+
 	// More stages = Less size. The trajectory roughly follows a+b*c^stages, where c < 1.
 	// 4 still gives ~30% savings over 3 stages and going beyond 5 gives diminishing returns (<10%).
 	trie := buildBestTrie(values, 2, 8, 4)

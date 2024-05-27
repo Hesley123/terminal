@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "GraphemeTableGen": {
+      "commandName": "Project",
+      "commandLineArgs": "C:\\Users\\lhecker\\Downloads\\ucd.nounihan.grouped.xml"
+    }
+  }
+}
